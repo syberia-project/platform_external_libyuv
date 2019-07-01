@@ -3186,7 +3186,8 @@ TEST_F(LibYUVPlanarTest, TestGaussRow_Opt) {
   }
   GaussRow_C(&orig_pixels[0], &dst_pixels_c[0], 640);
   for (int i = 0; i < benchmark_pixels_div1280_ * 2; ++i) {
-#if !defined(LIBYUV_DISABLE_NEON) && defined(__aarch64__)
+#if !defined(LIBYUV_DISABLE_NEON) && \
+    (defined(__aarch64__) || defined(__ARM_NEON__) || defined(LIBYUV_NEON))
     int has_neon = TestCpuFlag(kCpuHasNEON);
     if (has_neon) {
       GaussRow_NEON(&orig_pixels[0], &dst_pixels_opt[0], 640);
@@ -3239,7 +3240,8 @@ TEST_F(LibYUVPlanarTest, TestGaussCol_Opt) {
              &orig_pixels[640 * 3], &orig_pixels[640 * 4], &dst_pixels_c[0],
              640);
   for (int i = 0; i < benchmark_pixels_div1280_ * 2; ++i) {
-#if !defined(LIBYUV_DISABLE_NEON) && defined(__aarch64__)
+#if !defined(LIBYUV_DISABLE_NEON) && \
+    (defined(__aarch64__) || defined(__ARM_NEON__) || defined(LIBYUV_NEON))
     int has_neon = TestCpuFlag(kCpuHasNEON);
     if (has_neon) {
       GaussCol_NEON(&orig_pixels[0], &orig_pixels[640], &orig_pixels[640 * 2],
@@ -3265,6 +3267,106 @@ TEST_F(LibYUVPlanarTest, TestGaussCol_Opt) {
             static_cast<uint32_t>(0 * 1 + 640 * 4 + 640 * 2 * 6 + 640 * 3 * 4 +
                                   640 * 4 * 1));
   EXPECT_EQ(dst_pixels_c[639], static_cast<uint32_t>(30704));
+}
+
+float TestFloatDivToByte(int benchmark_width,
+                         int benchmark_height,
+                         int benchmark_iterations,
+                         float scale,
+                         bool opt) {
+  int i, j;
+  // NEON does multiple of 8, so round count up
+  const int kPixels = (benchmark_width * benchmark_height + 7) & ~7;
+  align_buffer_page_end(src_weights, kPixels * 4);
+  align_buffer_page_end(src_values, kPixels * 4);
+  align_buffer_page_end(dst_out_c, kPixels);
+  align_buffer_page_end(dst_out_opt, kPixels);
+  align_buffer_page_end(dst_mask_c, kPixels);
+  align_buffer_page_end(dst_mask_opt, kPixels);
+
+  // Randomize works but may contain some denormals affecting performance.
+  // MemRandomize(orig_y, kPixels * 4);
+  // large values are problematic.  audio is really -1 to 1.
+  for (i = 0; i < kPixels; ++i) {
+    (reinterpret_cast<float*>(src_weights))[i] = scale;
+    (reinterpret_cast<float*>(src_values))[i] =
+        sinf(static_cast<float>(i) * 0.1f);
+  }
+  memset(dst_out_c, 0, kPixels);
+  memset(dst_out_opt, 1, kPixels);
+  memset(dst_mask_c, 2, kPixels);
+  memset(dst_mask_opt, 3, kPixels);
+
+  FloatDivToByteRow_C(reinterpret_cast<float*>(src_weights),
+                      reinterpret_cast<float*>(src_values), dst_out_c,
+                      dst_mask_c, kPixels);
+
+  for (j = 0; j < benchmark_iterations; j++) {
+    if (opt) {
+#ifdef HAS_FLOATDIVTOBYTEROW_NEON
+      FloatDivToByteRow_NEON(reinterpret_cast<float*>(src_weights),
+                             reinterpret_cast<float*>(src_values), dst_out_opt,
+                             dst_mask_opt, kPixels);
+#else
+      FloatDivToByteRow_C(reinterpret_cast<float*>(src_weights),
+                          reinterpret_cast<float*>(src_values), dst_out_opt,
+                          dst_mask_opt, kPixels);
+#endif
+    } else {
+      FloatDivToByteRow_C(reinterpret_cast<float*>(src_weights),
+                          reinterpret_cast<float*>(src_values), dst_out_opt,
+                          dst_mask_opt, kPixels);
+    }
+  }
+
+  uint8_t max_diff = 0;
+  for (i = 0; i < kPixels; ++i) {
+    uint8_t abs_diff = abs(dst_out_c[i] - dst_out_opt[i]) +
+                       abs(dst_mask_c[i] - dst_mask_opt[i]);
+    if (abs_diff > max_diff) {
+      max_diff = abs_diff;
+    }
+  }
+
+  free_aligned_buffer_page_end(src_weights);
+  free_aligned_buffer_page_end(src_values);
+  free_aligned_buffer_page_end(dst_out_c);
+  free_aligned_buffer_page_end(dst_out_opt);
+  free_aligned_buffer_page_end(dst_mask_c);
+  free_aligned_buffer_page_end(dst_mask_opt);
+
+  return max_diff;
+}
+
+TEST_F(LibYUVPlanarTest, TestFloatDivToByte_C) {
+  float diff = TestFloatDivToByte(benchmark_width_, benchmark_height_,
+                                  benchmark_iterations_, 1.2f, false);
+  EXPECT_EQ(0, diff);
+}
+
+TEST_F(LibYUVPlanarTest, TestFloatDivToByte_Opt) {
+  float diff = TestFloatDivToByte(benchmark_width_, benchmark_height_,
+                                  benchmark_iterations_, 1.2f, true);
+  EXPECT_EQ(0, diff);
+}
+
+TEST_F(LibYUVPlanarTest, UVToVURow) {
+  const int kPixels = benchmark_width_ * benchmark_height_;
+  align_buffer_page_end(src_pixels_vu, kPixels * 2);
+  align_buffer_page_end(dst_pixels_uv, kPixels * 2);
+
+  MemRandomize(src_pixels_vu, kPixels * 2);
+  memset(dst_pixels_uv, 1, kPixels * 2);
+
+  UVToVURow_C(src_pixels_vu, dst_pixels_uv, kPixels);
+
+  for (int i = 0; i < kPixels; ++i) {
+    EXPECT_EQ(dst_pixels_uv[i * 2 + 0], src_pixels_vu[i * 2 + 1]);
+    EXPECT_EQ(dst_pixels_uv[i * 2 + 1], src_pixels_vu[i * 2 + 0]);
+  }
+
+  free_aligned_buffer_page_end(src_pixels_vu);
+  free_aligned_buffer_page_end(dst_pixels_uv);
 }
 
 }  // namespace libyuv
