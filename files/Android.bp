@@ -1,6 +1,7 @@
 cc_library {
     name: "libyuv",
     vendor_available: true,
+    host_supported: true,
     vndk: {
         enabled: true,
     },
