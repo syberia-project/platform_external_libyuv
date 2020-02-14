@@ -427,7 +427,15 @@ boolean fill_input_buffer(j_decompress_ptr cinfo) {
 }
 
 void skip_input_data(j_decompress_ptr cinfo, long num_bytes) {  // NOLINT
-  cinfo->src->next_input_byte += num_bytes;
+  jpeg_source_mgr* src = cinfo->src;
+  size_t bytes = static_cast<size_t>(num_bytes);
+  if(bytes > src->bytes_in_buffer) {
+    src->next_input_byte = nullptr;
+    src->bytes_in_buffer = 0;
+  } else {
+    src->next_input_byte += bytes;
+    src->bytes_in_buffer -= bytes;
+  }
 }
 
 void term_source(j_decompress_ptr cinfo) {
