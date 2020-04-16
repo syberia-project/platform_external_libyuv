@@ -64,6 +64,12 @@ cc_library {
     shared_libs: ["libjpeg"],
 
     export_include_dirs: ["include"],
+
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+    ],
+    min_sdk_version: "29",
 }
 
 // compatibilty static library until all uses of libyuv_static are replaced
@@ -72,6 +78,11 @@ cc_library_static {
     name: "libyuv_static",
     vendor_available: true,
     whole_static_libs: ["libyuv"],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.media.swcodec",
+    ],
+    min_sdk_version: "29",
 }
 
 cc_test {
